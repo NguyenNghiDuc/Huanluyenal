@@ -1,0 +1,16 @@
+node_modules/
+.env
+server/.env
+data/*
+!data/.gitkeep
+web/dist/
+.env.*
+!.env.example
+*.sqlite*
+coverage/
+playwright-report/
+test-results/
+scratch/
+shared/
+library-files/
+.DS_Store
