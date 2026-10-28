@@ -1,6 +1,9 @@
 import React from "react";
 import Highlight from "./Highlight";
 export default function Sidebar({
+  workspace,
+  workspaces,
+  onWorkspace,
   items,
   selected,
   busy,
@@ -22,6 +25,21 @@ export default function Sidebar({
           Trợ lý của bạn<small>Ghi nhớ · Tìm hiểu · Đồng hành</small>
         </div>
       </div>
+      <label className="workspace-picker">
+        <span>KHÔNG GIAN LÀM VIỆC</span>
+        <select
+          aria-label="Không gian làm việc"
+          value={workspace.id}
+          disabled={busy}
+          onChange={(e) => onWorkspace(e.target.value)}
+        >
+          {workspaces.map((w) => (
+            <option key={w.id} value={w.id}>
+              {w.name}
+            </option>
+          ))}
+        </select>
+      </label>
       <button className="new" disabled={busy} onClick={onNew}>
         ＋ Cuộc trò chuyện mới
       </button>
@@ -31,6 +49,8 @@ export default function Sidebar({
           ["memories", "◇ Trí nhớ"],
           ["knowledge", "▤ Kiến thức"],
           ["learned", "✓ Duyệt kiến thức"],
+          ["actions", "☑ Công việc"],
+          ["workspaces", "⚙ Không gian"],
         ].map(([key, label]) => (
           <button
             key={key}
@@ -124,7 +144,7 @@ export default function Sidebar({
         )}
       </div>
       <footer>
-        <span className="dot" /> al · Không gian cá nhân
+        <span className="dot" /> al · {workspace.name}
       </footer>
     </aside>
   );

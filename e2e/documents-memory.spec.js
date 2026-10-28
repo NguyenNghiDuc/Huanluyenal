@@ -195,13 +195,11 @@ test("drag and drop preserves Vietnamese filenames and reports unsupported files
     "Kiến thức về cây cà phê.",
   );
   await page.getByRole("button", { name: "Đóng cửa sổ" }).click();
-  await page
-    .getByLabel("Tải tài liệu", { exact: true })
-    .setInputFiles({
-      name: "unsupported.exe",
-      mimeType: "application/octet-stream",
-      buffer: Buffer.from("binary"),
-    });
+  await page.getByLabel("Tải tài liệu", { exact: true }).setInputFiles({
+    name: "unsupported.exe",
+    mimeType: "application/octet-stream",
+    buffer: Buffer.from("binary"),
+  });
   await expect(page.getByRole("alert")).toContainText(
     "Chỉ hỗ trợ PDF, Markdown và TXT.",
   );

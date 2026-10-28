@@ -26,13 +26,11 @@ export default {
     if (!response.ok) throw new Error("Tìm kiếm web tạm thời không khả dụng.");
     const data = await response.json();
     return {
-      results: (data.web?.results || [])
-        .slice(0, 5)
-        .map((r) => ({
-          title: String(r.title).slice(0, 200),
-          url: String(r.url).slice(0, 1000),
-          description: String(r.description || "").slice(0, 1200),
-        })),
+      results: (data.web?.results || []).slice(0, 5).map((r) => ({
+        title: String(r.title).slice(0, 200),
+        url: String(r.url).slice(0, 1000),
+        description: String(r.description || "").slice(0, 1200),
+      })),
     };
   },
 };

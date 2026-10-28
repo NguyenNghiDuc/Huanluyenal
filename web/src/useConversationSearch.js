@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { api } from "./api";
+import { useWorkspaceApi } from "./WorkspaceContext";
 export default function useConversationSearch(query, items) {
+  const { api } = useWorkspaceApi();
   const [state, setState] = useState({
     items: [],
     loading: false,
@@ -42,7 +43,7 @@ export default function useConversationSearch(query, items) {
       clearTimeout(timer);
       controller.abort();
     };
-  }, [trimmed, items]);
+  }, [trimmed, items, api]);
   if (!trimmed) return { items, loading: false, error: "", searching: false };
   if (state.forQuery !== trimmed)
     return { items: [], loading: true, error: "", searching: true };

@@ -1,7 +1,6 @@
 import "dotenv/config";
 import express from "express";
-import cors from "cors";
-import { rateLimit } from "express-rate-limit";
+
 import { z } from "zod";
 import { fileURLToPath } from "node:url";
 import { readFileSync } from "node:fs";
@@ -24,13 +23,21 @@ import {
   DOCUMENTS_ROOT,
 } from "./documents.js";
 import { searchConversations } from "./search.js";
-export function createApp({
+import { workflowRoutes, createWorkflowService } from "./workflows.js";
+import { configureHttp, errorHandler } from "./http.js";
+import { createWorkspaceController } from "./workspaces.js";
+export function createWorkspaceApp({
   generate = answer,
   db = openDB(),
   extract = extractFacts,
   compareMemory,
   knowledgeRoot = KNOWLEDGE_ROOT,
   documentsRoot = DOCUMENTS_ROOT,
+  workspacePersona = () => "",
+  workspaceName = () => "Cá nhân",
+  workflowGenerate,
+  sendExternal,
+  externalConfig,
   personaPath = fileURLToPath(new URL("./persona.md", import.meta.url)),
 } = {}) {
   const app = express();
@@ -46,29 +53,18 @@ export function createApp({
   app.locals.documents = documentManager;
   const active = new Set();
   app.locals.db = db;
-  const origin = process.env.WEB_ORIGIN || "http://localhost:5173";
-  app.use((req, res, next) => {
-    if (req.headers.origin && req.headers.origin !== origin)
-      return res.status(403).json({ error: "Origin không được phép." });
-    next();
-  });
-  app.use(cors({ origin }));
-  app.use("/api", (_, res, next) => {
-    res.set("Cache-Control", "no-store");
-    next();
-  });
-  app.use(express.json({ limit: "64kb" }));
-  app.use(
-    "/api",
-    rateLimit({
-      windowMs: 60000,
-      limit: 120,
-      standardHeaders: "draft-8",
-      legacyHeaders: false,
-      message: { error: "Bạn gửi quá nhanh. Hãy chờ một phút." },
-    }),
-  );
+  app.locals.active = active;
   app.get("/api/health", (_, res) => res.json({ ok: true }));
+  const workflows = createWorkflowService({
+    db,
+    generate: workflowGenerate,
+    sendExternal,
+    externalConfig,
+    persona: () =>
+      readFileSync(personaPath, "utf8") + "\n" + workspacePersona(),
+  });
+  app.locals.workflows = workflows;
+  app.use("/api", workflowRoutes(workflows, db));
   const idSchema = z.uuid();
   const titleSchema = z
     .object({ title: z.string().trim().min(1).max(120) })
@@ -190,230 +186,212 @@ export function createApp({
           : { error: "Đề xuất không tồn tại hoặc đã được xử lý." },
       );
   });
-  app.post(
-    "/api/chat",
-    rateLimit({
-      windowMs: 60000,
-      limit: 15,
-      standardHeaders: "draft-8",
-      legacyHeaders: false,
-      message: { error: "Bạn gửi tin nhắn quá nhanh. Hãy chờ một phút." },
-    }),
-    async (req, res) => {
-      const persistent = z
-        .object({
-          message: z.string().max(8000).trim().min(1).optional(),
-          conversationId: z.uuid().optional(),
-          regenerate: z.boolean().optional(),
-          temporary: z.literal(false).optional(),
-        })
-        .strict()
-        .refine((v) =>
-          v.regenerate ? !!v.conversationId && !v.message : !!v.message,
-        );
-      const temporary = z
-        .object({
-          temporary: z.literal(true),
-          messages: z
-            .array(
-              z
-                .object({
-                  role: z.enum(["user", "assistant"]),
-                  content: z.string().min(1).max(40000),
-                })
-                .strict(),
-            )
-            .min(1)
-            .max(40),
-        })
-        .strict()
-        .refine(
-          (v) =>
-            v.messages[0].role === "user" &&
-            v.messages.at(-1).role === "user" &&
-            v.messages.every(
-              (m) => m.role !== "user" || m.content.length <= 8000,
-            ) &&
-            v.messages.reduce((n, m) => n + m.content.length, 0) <= 60000,
-        );
-      const parsed = z.union([persistent, temporary]).safeParse(req.body);
-      if (!parsed.success)
-        return res
-          .status(400)
-          .json({
-            error:
-              "Yêu cầu chat không hợp lệ. Tin nhắn tối đa 8000 ký tự; chat tạm thời chỉ nhận lịch sử giới hạn và không kèm ID hội thoại.",
-          });
-      const body = parsed.data,
-        isTemporary = body.temporary === true;
-      let id = null;
-      if (!isTemporary) {
-        const conversation = body.conversationId
-          ? db
-              .prepare("SELECT * FROM conversations WHERE id=?")
-              .get(body.conversationId)
-          : createConversation(db, body.message.slice(0, 60));
-        if (!conversation)
-          return res.status(404).json({ error: "Không tìm thấy hội thoại." });
-        id = conversation.id;
-        if (active.has(id))
-          return res
-            .status(409)
-            .json({ error: "al đang trả lời trong hội thoại này." });
-        if (body.regenerate) {
-          const lastUser = db
-            .prepare(
-              "SELECT id FROM messages WHERE conversation_id=? AND role='user' ORDER BY id DESC LIMIT 1",
-            )
-            .get(id);
-          if (!lastUser)
-            return res
-              .status(400)
-              .json({ error: "Chưa có tin nhắn để tạo lại." });
-          db.prepare(
-            "DELETE FROM messages WHERE conversation_id=? AND id>?",
-          ).run(id, lastUser.id);
-        } else addMessage(db, id, "user", body.message);
-        active.add(id);
-      }
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 90000);
-      res.on("close", () => controller.abort());
-      res.set({
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-store",
-        Connection: "keep-alive",
-        "X-Accel-Buffering": "no",
+  app.post("/api/chat", async (req, res) => {
+    const persistent = z
+      .object({
+        message: z.string().max(8000).trim().min(1).optional(),
+        conversationId: z.uuid().optional(),
+        regenerate: z.boolean().optional(),
+        temporary: z.literal(false).optional(),
+      })
+      .strict()
+      .refine((v) =>
+        v.regenerate ? !!v.conversationId && !v.message : !!v.message,
+      );
+    const temporary = z
+      .object({
+        temporary: z.literal(true),
+        messages: z
+          .array(
+            z
+              .object({
+                role: z.enum(["user", "assistant"]),
+                content: z.string().min(1).max(40000),
+              })
+              .strict(),
+          )
+          .min(1)
+          .max(40),
+      })
+      .strict()
+      .refine(
+        (v) =>
+          v.messages[0].role === "user" &&
+          v.messages.at(-1).role === "user" &&
+          v.messages.every(
+            (m) => m.role !== "user" || m.content.length <= 8000,
+          ) &&
+          v.messages.reduce((n, m) => n + m.content.length, 0) <= 60000,
+      );
+    const parsed = z.union([persistent, temporary]).safeParse(req.body);
+    if (!parsed.success)
+      return res.status(400).json({
+        error:
+          "Yêu cầu chat không hợp lệ. Tin nhắn tối đa 8000 ký tự; chat tạm thời chỉ nhận lịch sử giới hạn và không kèm ID hội thoại.",
       });
-      res.flushHeaders();
-      const send = (event, data) => {
-        if (!res.destroyed)
-          res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
-      };
-      send("meta", { conversationId: id, temporary: isTemporary });
-      const heartbeat = setInterval(() => {
-        if (!res.destroyed) res.write(": ping\n\n");
-      }, 15000);
-      let output = "",
-        saved = false,
-        sources = [];
-      try {
-        const latest = (isTemporary ? body.messages : history(db, id))
-          .filter((m) => m.content)
-          .slice(-40);
-        const messages = [];
-        let contextSize = 0;
-        for (let i = latest.length - 1; i >= 0; i--) {
-          const { role, content } = latest[i];
-          if (messages.length && contextSize + content.length > 60000) break;
-          messages.unshift({ role, content });
-          contextSize += content.length;
-        }
-        while (messages[0]?.role === "assistant") messages.shift();
-        const query =
-          [...messages].reverse().find((m) => m.role === "user")?.content || "";
+    const body = parsed.data,
+      isTemporary = body.temporary === true;
+    let id = null;
+    if (!isTemporary) {
+      const conversation = body.conversationId
+        ? db
+            .prepare("SELECT * FROM conversations WHERE id=?")
+            .get(body.conversationId)
+        : createConversation(db, body.message.slice(0, 60));
+      if (!conversation)
+        return res.status(404).json({ error: "Không tìm thấy hội thoại." });
+      id = conversation.id;
+      if (active.has(id))
+        return res
+          .status(409)
+          .json({ error: "al đang trả lời trong hội thoại này." });
+      if (body.regenerate) {
+        const lastUser = db
+          .prepare(
+            "SELECT id FROM messages WHERE conversation_id=? AND role='user' ORDER BY id DESC LIMIT 1",
+          )
+          .get(id);
+        if (!lastUser)
+          return res
+            .status(400)
+            .json({ error: "Chưa có tin nhắn để tạo lại." });
+        db.prepare("DELETE FROM messages WHERE conversation_id=? AND id>?").run(
+          id,
+          lastUser.id,
+        );
+      } else addMessage(db, id, "user", body.message);
+      active.add(id);
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 90000);
+    res.on("close", () => controller.abort());
+    res.set({
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-store",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    });
+    res.flushHeaders();
+    const send = (event, data) => {
+      if (!res.destroyed)
+        res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+    send("meta", { conversationId: id, temporary: isTemporary });
+    const heartbeat = setInterval(() => {
+      if (!res.destroyed) res.write(": ping\n\n");
+    }, 15000);
+    let output = "",
+      saved = false,
+      sources = [];
+    try {
+      const latest = (isTemporary ? body.messages : history(db, id))
+        .filter((m) => m.content)
+        .slice(-40);
+      const messages = [];
+      let contextSize = 0;
+      for (let i = latest.length - 1; i >= 0; i--) {
+        const { role, content } = latest[i];
+        if (messages.length && contextSize + content.length > 60000) break;
+        messages.unshift({ role, content });
+        contextSize += content.length;
+      }
+      while (messages[0]?.role === "assistant") messages.shift();
+      const query =
+        [...messages].reverse().find((m) => m.role === "user")?.content || "";
 
+      try {
+        sources = rag.search(query);
+      } catch {
+        send("warning", {
+          message: "Chưa thể đọc kho kiến thức; al vẫn tiếp tục trả lời.",
+        });
+      }
+      send("sources", {
+        sources: sources.map(({ content, score, ...citation }) => citation),
+      });
+      await generate({
+        messages,
+        tools: createTools({
+          root: knowledgeRoot,
+          onArtifact: (artifact) => send("artifact", artifact),
+          ...(!isTemporary ? { db, conversationId: id } : {}),
+        }),
+        onStatus: (message) => send("status", { message }),
+        system:
+          readFileSync(personaPath, "utf8") +
+          "\n\nKhông gian hiện tại: " +
+          workspaceName() +
+          ".\n" +
+          workspacePersona() +
+          "\nBạn có thể tạo bản nháp công việc/kế hoạch/tài liệu bằng tool create_artifact. Không tự gửi ra ngoài; người dùng phải duyệt trên web." +
+          (isTemporary
+            ? "\nĐây là chat tạm thời. Không ghi nhớ hoặc đề xuất lưu kiến thức; không tuyên bố đã lưu thông tin."
+            : memoryContext(db)) +
+          ragContext(sources),
+        signal: controller.signal,
+        onText: (text) => {
+          output += text;
+          send("delta", { text });
+        },
+      });
+      if (controller.signal.aborted)
+        throw new DOMException("Stopped", "AbortError");
+      if (!isTemporary) {
+        addMessage(
+          db,
+          id,
+          "assistant",
+          output,
+          "complete",
+          sources.map(({ content, score, ...citation }) => citation),
+        );
+        saved = true;
+        send("status", { message: "Đang cập nhật trí nhớ…" });
         try {
-          sources = rag.search(query);
+          const result = await remember({
+            db,
+            id,
+            messages: [...messages, { role: "assistant", content: output }],
+            signal: controller.signal,
+            extract,
+          });
+          if (result.conflicts)
+            send("memory_conflict", {
+              message: `Có ${result.conflicts} ký ức có thể mâu thuẫn. Mở Trí nhớ để chọn thông tin đúng.`,
+            });
         } catch {
           send("warning", {
-            message: "Chưa thể đọc kho kiến thức; al vẫn tiếp tục trả lời.",
+            message: "Câu trả lời đã lưu; lần này chưa thể cập nhật trí nhớ.",
           });
         }
-        send("sources", {
-          sources: sources.map(({ content, score, ...citation }) => citation),
-        });
-        await generate({
-          messages,
-          tools: createTools({
-            root: knowledgeRoot,
-            ...(!isTemporary ? { db, conversationId: id } : {}),
-          }),
-          onStatus: (message) => send("status", { message }),
-          system:
-            readFileSync(personaPath, "utf8") +
-            (isTemporary
-              ? "\nĐây là chat tạm thời. Không ghi nhớ hoặc đề xuất lưu kiến thức; không tuyên bố đã lưu thông tin."
-              : memoryContext(db)) +
-            ragContext(sources),
-          signal: controller.signal,
-          onText: (text) => {
-            output += text;
-            send("delta", { text });
-          },
-        });
-        if (controller.signal.aborted)
-          throw new DOMException("Stopped", "AbortError");
-        if (!isTemporary) {
-          addMessage(
-            db,
-            id,
-            "assistant",
-            output,
-            "complete",
-            sources.map(({ content, score, ...citation }) => citation),
-          );
-          saved = true;
-          send("status", { message: "Đang cập nhật trí nhớ…" });
-          try {
-            const result = await remember({
-              db,
-              id,
-              messages: [...messages, { role: "assistant", content: output }],
-              signal: controller.signal,
-              extract,
-            });
-            if (result.conflicts)
-              send("memory_conflict", {
-                message: `Có ${result.conflicts} ký ức có thể mâu thuẫn. Mở Trí nhớ để chọn thông tin đúng.`,
-              });
-          } catch {
-            send("warning", {
-              message: "Câu trả lời đã lưu; lần này chưa thể cập nhật trí nhớ.",
-            });
-          }
-        }
-        send("done", {});
-      } catch (error) {
-        if (!isTemporary && output && !saved)
-          addMessage(
-            db,
-            id,
-            "assistant",
-            output,
-            "interrupted",
-            sources.map(({ content, score, ...citation }) => citation),
-          );
-        if (!res.destroyed) send("error", { error: friendly(error) });
-      } finally {
-        if (id) active.delete(id);
-        clearTimeout(timer);
-        clearInterval(heartbeat);
-        res.end();
       }
-    },
-  );
+      send("done", {});
+    } catch (error) {
+      if (!isTemporary && output && !saved)
+        addMessage(
+          db,
+          id,
+          "assistant",
+          output,
+          "interrupted",
+          sources.map(({ content, score, ...citation }) => citation),
+        );
+      if (!res.destroyed) send("error", { error: friendly(error) });
+    } finally {
+      if (id) active.delete(id);
+      clearTimeout(timer);
+      clearInterval(heartbeat);
+      res.end();
+    }
+  });
   app.use("/api", (_, res) =>
     res.status(404).json({ error: "Không tìm thấy API." }),
   );
-  app.use((error, req, res, next) => {
-    if (res.headersSent) return next(error);
-    const status = error.publicMessage
-      ? error.status
-      : error.status === 413
-        ? 413
-        : error.type === "entity.parse.failed"
-          ? 400
-          : 500;
-    res.status(status).json({
-      error:
-        error.publicMessage ||
-        (status === 500
-          ? "Có lỗi phía server. Vui lòng thử lại."
-          : "Yêu cầu không hợp lệ hoặc quá lớn."),
-    });
-  });
+  app.use(errorHandler);
   return app;
+}
+export function createApp(options = {}) {
+  return createWorkspaceController(options, createWorkspaceApp);
 }
 if (process.argv[1] === fileURLToPath(import.meta.url))
   createApp().listen(

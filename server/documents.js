@@ -1,6 +1,6 @@
 import { Router } from "express";
 import multer from "multer";
-import { rateLimit } from "express-rate-limit";
+
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
 import { Worker } from "node:worker_threads";
@@ -295,34 +295,25 @@ export function documentRoutes(manager, db, rag) {
     storage: multer.memoryStorage(),
     limits: { fileSize: UPLOAD_LIMIT, files: 1, fields: 0, parts: 2 },
   }).single("file");
-  router.post(
-    "/documents",
-    rateLimit({
-      windowMs: 60000,
-      limit: 10,
-      standardHeaders: "draft-8",
-      legacyHeaders: false,
-      message: { error: "Tối đa 10 lần tải tài liệu mỗi phút." },
+  router.post("/documents", (req, res, next) =>
+    upload(req, res, (error) => {
+      if (error)
+        return next(
+          new PublicError(
+            error.code === "LIMIT_FILE_SIZE" ? 413 : 400,
+            error.code === "LIMIT_FILE_SIZE"
+              ? "File vượt quá 10 MiB."
+              : "Chỉ gửi một file với trường “file”, không kèm trường khác.",
+          ),
+        );
+      if (!req.file)
+        return next(new PublicError(400, "Hãy chọn một file để tải lên."));
+      try {
+        res.status(202).json(manager.accept(req.file));
+      } catch (e) {
+        next(e);
+      }
     }),
-    (req, res, next) =>
-      upload(req, res, (error) => {
-        if (error)
-          return next(
-            new PublicError(
-              error.code === "LIMIT_FILE_SIZE" ? 413 : 400,
-              error.code === "LIMIT_FILE_SIZE"
-                ? "File vượt quá 10 MiB."
-                : "Chỉ gửi một file với trường “file”, không kèm trường khác.",
-            ),
-          );
-        if (!req.file)
-          return next(new PublicError(400, "Hãy chọn một file để tải lên."));
-        try {
-          res.status(202).json(manager.accept(req.file));
-        } catch (e) {
-          next(e);
-        }
-      }),
   );
   router.use("/documents/:id", (req, res, next) => {
     if (!z.uuid().safeParse(req.params.id).success)

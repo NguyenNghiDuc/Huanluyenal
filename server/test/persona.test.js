@@ -23,10 +23,10 @@ test("step 3: persona file is loaded on every turn", async () => {
   try {
     writeFileSync(file, "Tên al, tiếng Việt");
     await request(app).post("/api/chat").send({ message: "hi" });
-    assert.equal(prompt, "Tên al, tiếng Việt");
+    assert.ok(prompt.startsWith("Tên al, tiếng Việt"));
     writeFileSync(file, "Giọng điệu mới");
     await request(app).post("/api/chat").send({ message: "hi" });
-    assert.equal(prompt, "Giọng điệu mới");
+    assert.ok(prompt.startsWith("Giọng điệu mới"));
   } finally {
     db.close();
     rmSync(dir, { recursive: true, force: true });

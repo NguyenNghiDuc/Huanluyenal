@@ -2,13 +2,14 @@ import getTime from "./get_time.js";
 import calculator from "./calculator.js";
 import readFile from "./read_file.js";
 import webSearch from "./web_search.js";
+import createArtifact from "./create_artifact.js";
 import proposeKnowledge from "./propose_knowledge.js";
 export function createTools(context) {
   const tools = [
     getTime,
     calculator,
     readFile,
-    ...(context.db ? [proposeKnowledge] : []),
+    ...(context.db ? [proposeKnowledge, createArtifact] : []),
     ...(process.env.BRAVE_SEARCH_API_KEY ? [webSearch] : []),
   ];
   return {

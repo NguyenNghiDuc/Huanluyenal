@@ -42,13 +42,55 @@ Server mặc định chỉ lắng nghe `127.0.0.1:3001`. `WEB_ORIGIN` mặc đ�
 
 Hội thoại, ký ức liên quan và các đoạn tài liệu sử dụng được gửi đến Anthropic để trả lời. Thêm `BRAVE_SEARCH_API_KEY` vào `server/.env` rồi khởi động lại để bật tool tìm kiếm web (câu truy vấn được gửi đến Brave).
 
+## Không gian làm việc
+
+Bộ chọn ở thanh bên có sẵn **Cá nhân**, **Công việc**, **Học tập**. Mỗi không gian tách riêng hội thoại/tìm lịch sử, ký ức/cấu hình trí nhớ, hàng chờ mâu thuẫn, tài liệu/RAG, kiến thức đã học, công việc và hộp chờ gửi. Trình duyệt nhớ trang/hội thoại theo từng không gian; chuyển không gian không mang theo nội dung chat cũ.
+
+Trang **Không gian** cho tạo không gian mới, đổi tên/mô tả, sửa persona và lưu trữ/khôi phục. Persona riêng bổ sung vào `server/persona.md`, áp dụng ở lượt chat hoặc tạo bản nháp tiếp theo. Lưu trữ giữ nguyên dữ liệu; không gian đang chat, xử lý tài liệu hoặc gửi ra ngoài phải hoàn tất trước khi lưu trữ. Không gian Cá nhân chứa dữ liệu trước nâng cấp và không thể lưu trữ. Tối đa 50 không gian, kể cả đã lưu trữ.
+
+Dữ liệu cũ giữ nguyên tại `data/al.sqlite`, `knowledge/`, `data/documents/`. Các không gian khác dùng SQLite và thư mục riêng dưới `data/.workspaces/<id>/` (hoặc `.workspaces/` cạnh file DB đã cấu hình): `al.sqlite`, `knowledge/`, `documents/`. RAG/tool đọc file không truy cập thư mục ẩn hoặc vượt ra ngoài kho của không gian. Đây là tách ngữ cảnh cho **một người dùng**, chưa phải phân quyền nhiều tài khoản.
+
+API mặc định dùng Cá nhân để tương thích mã cũ. Đặt header `X-Workspace-Id` để chọn không gian. Liên kết tải file dùng query `workspace`; nếu cả header và query xuất hiện, chúng phải trùng nhau. Không tìm thấy ID trong không gian hiện tại sẽ trả 404. Rate limit tính theo IP trên toàn ứng dụng, không được đặt lại khi đổi không gian.
+
+## Từ hội thoại thành hành động
+
+Dưới tin nhắn đã lưu, bấm **Tạo công việc / tài liệu**, chọn **Danh sách việc**, **Kế hoạch học tập** hoặc **Bản nháp tài liệu**, thêm yêu cầu rồi tạo bằng AI. al dùng ngữ cảnh đến tin nhắn đó để soạn bản nháp. Nếu API lỗi, ứng dụng báo rõ và không tạo mục dở; bạn vẫn có thể tạo thủ công ở trang **Công việc**. Chat tạm thời không có chức năng lưu bản nháp.
+
+- Sửa tiêu đề, tóm tắt, Markdown; xem trước và chuyển trạng thái bản nháp/đang thực hiện/đã lưu trữ. Tìm theo tiêu đề, lọc loại và trạng thái.
+- Danh sách/kế hoạch có việc con với ghi chú, ngày hạn, ưu tiên và trạng thái chưa làm/đang làm/hoàn tất. Thêm, sửa, xoá việc và theo dõi tiến độ. AI đề xuất tối đa 30 việc/lượt; có thể thêm thủ công đến 100 việc/mục. Không tự đặt ngày hạn khi chưa được yêu cầu.
+- Xuất Markdown, JSON, hoặc lịch `.ics` dạng VTODO cho danh sách/kế hoạch. File xuất dùng bản đã lưu. Việc nhập VTODO phụ thuộc ứng dụng lịch bạn sử dụng; đây là tải file, không tự tạo sự kiện trên dịch vụ ngoài.
+- Phiên bản tăng sau mỗi chỉnh sửa. Nếu hai tab sửa cùng một bản cũ, API trả 409 và cho tải bản mới nhất, thay vì ghi đè. Giới hạn 500 mục chưa lưu trữ mỗi không gian.
+- Tool `create_artifact` cho al tạo bản nháp nội bộ khi bạn yêu cầu trong chat. Tool không có quyền duyệt hay gửi ra ngoài.
+
+## Gửi ra ngoài có duyệt
+
+Tích hợp hiện có là **webhook HTTPS** do bạn cấu hình ở server. Để gửi vào email, lịch hoặc dịch vụ công việc, cấu hình bên nhận webhook/automation của bạn. Ứng dụng không tự kết nối các tài khoản này.
+
+Trong `server/.env`, điền:
+
+```dotenv
+EXTERNAL_WEBHOOK_URL=https://dich-vu-cua-ban.example/nhan
+EXTERNAL_WEBHOOK_LABEL=Hộp nhận của tôi
+EXTERNAL_WEBHOOK_TOKEN=
+```
+
+Token tuỳ chọn được gửi dưới dạng Bearer; URL và token chỉ nằm ở server. Khởi động lại sau khi thay đổi cấu hình. Nếu chưa cấu hình, tác vụ và xuất file vẫn dùng được; gửi ra ngoài bị tắt và có thông báo.
+
+1. Mở bản nháp đã lưu → **Tạo yêu cầu gửi ra ngoài**. Bước này chỉ lưu bản chụp nội dung, **chưa gọi webhook**.
+2. Mở **Hộp chờ duyệt**, kiểm tra nội dung/việc con, phiên bản, tên và hostname đích. Có mục xem toàn bộ JSON sẽ gửi.
+3. Bấm **Duyệt và gửi**, xác nhận lần cuối. Hoặc **Từ chối gửi**. Nếu nội dung/đích đã thay đổi sau khi tạo yêu cầu, duyệt bị chặn; từ chối yêu cầu cũ và tạo lại.
+
+Một yêu cầu chỉ được gửi bởi một lần duyệt đang chạy; duyệt lặp bị chặn. Mỗi yêu cầu có `Idempotency-Key` ổn định, dùng lại khi bạn duyệt thử lại. Bên nhận cần xử lý khoá này để chống trùng khi mất kết nối. Timeout/lỗi/khởi động lại giữa lúc gửi sẽ hiện “chưa xác nhận”; **không tự gửi lại**. Kiểm tra bên nhận trước khi duyệt thử lại, vì phía nhận có thể đã xử lý. Webhook không theo redirect, timeout 10 giây; phản hồi 2xx được coi là phía nhận chấp nhận, không đảm bảo mọi tác vụ phía nhận đã hoàn tất.
+
+Không đặt URL webhook trong nội dung chat hay frontend. Model không có tool gửi HTTP tuỳ ý hoặc phê duyệt hộp chờ. Chỉ nội dung bản nháp/việc con được chọn mới đi vào payload; lịch sử hội thoại và trí nhớ không được đính kèm tự động.
+
 ## Tải tài liệu và tra cứu nguồn
 
 Mở **Kho kiến thức**, kéo thả hoặc chọn một/nhiều file `.pdf`, `.md`, `.txt`. Web hiển thị tiến độ tải và trạng thái chờ → trích văn bản → lập chỉ mục → sẵn sàng. File lỗi có lý do, nút thử lại và xoá. Tài liệu đã sẵn sàng được dùng ngay trong RAG; không cần khởi động lại.
 
 - Tối đa **10 MiB/file**, **200 trang PDF**, **256 KiB văn bản sau trích xuất**. TXT/Markdown phải là UTF-8. PDF chỉ chứa ảnh/scan cần OCR trước; PDF có mật khẩu cần mở khoá. Chưa tích hợp OCR.
 - PDF được xử lý trong worker riêng, tối đa 2 tác vụ đồng thời, hàng chờ 20 tài liệu, timeout 30 giây/tác vụ. Nếu server dừng giữa chừng, lần chạy sau đánh dấu lỗi và cho thử lại từ bản gốc; file xử lý dở không đi vào RAG.
-- Bản gốc ở `data/documents/`, văn bản dẫn xuất ở `knowledge/uploads/`, metadata/số trang ở SQLite. Các file tải lên bị loại khỏi git. Khi sao lưu, dừng server và sao chép cả `data/` lẫn `knowledge/`.
+- Bản gốc ở `data/documents/`, văn bản dẫn xuất ở `knowledge/uploads/`, metadata/số trang ở SQLite của không gian hiện tại. Các file tải lên bị loại khỏi git. Khi sao lưu, dừng server và sao chép cả `data/` (bao gồm `.workspaces/`) lẫn `knowledge/`.
 - Bấm nguồn dưới câu trả lời hoặc liên kết trích dẫn để mở đúng đoạn, số trang PDF, chuyển đoạn trước/sau và tải bản gốc. Nguồn được lưu cùng câu trả lời nên vẫn mở được sau reload. Kiểm tra hash ngăn việc hiển thị đoạn đã sửa như nguồn cũ; nếu tài liệu bị xoá/thay đổi, web báo rõ.
 - Xoá tài liệu trên web xoá bản gốc và văn bản dẫn xuất khỏi RAG. Câu trả lời cũ vẫn giữ nội dung, nhưng nguồn đã xoá không còn mở được.
 
@@ -64,7 +106,7 @@ Tạo `server/tools/my_tool.js`, export mặc định một object gồm:
 - `schema` (Zod schema nghiêm ngặt để validate đầu vào).
 - `async execute(input, context)` trả về dữ liệu JSON; context có `root`, `db`, `conversationId`, `signal` để huỷ tác vụ.
 
-Import và thêm vào mảng trong `server/tools/index.js`, rồi khởi động lại. Xem `get_time.js` làm ví dụ hoàn chỉnh. Tool mặc định: `get_time`, `calculator` (parser số học, không `eval`), `read_file`, `propose_knowledge`; `web_search` chỉ được quảng bá khi có key. Agent thực thi tối đa 5 lượt tool, tối đa 8 tool mỗi lượt; sau đó buộc model trả lời không gọi thêm tool.
+Import và thêm vào mảng trong `server/tools/index.js`, rồi khởi động lại. Xem `get_time.js` làm ví dụ hoàn chỉnh. Tool mặc định: `get_time`, `calculator` (parser số học, không `eval`), `read_file`, `propose_knowledge`; `web_search` chỉ được quảng bá khi có key; `create_artifact` tạo bản nháp nội bộ và bị tắt trong chat tạm thời. Agent thực thi tối đa 5 lượt tool, tối đa 8 tool mỗi lượt; sau đó buộc model trả lời không gọi thêm tool.
 
 ## Kiểm tra và CI
 
@@ -82,21 +124,21 @@ npm run test:e2e
 
 `npm test` chạy test backend và frontend. E2E dùng server fixture riêng ở `e2e/fixtures/server.mjs`, SQLite/tài liệu tạm và model giả lập; không tiêu phí API hay chạm vào `data/` thật. Đóng server/web đang chạy trên port 3001/5173 trước khi chạy E2E. Nếu đã có Chromium hệ thống, có thể đặt `PLAYWRIGHT_CHROMIUM_EXECUTABLE=/đường/dẫn/chromium`.
 
-GitHub Actions tự chạy khi push lên `main`, khi có pull request, hoặc bấm **Run workflow** tại [Actions](https://github.com/NguyenNghiDuc/Huanluyenal/actions/workflows/ci.yml). CI kiểm thử và build trên Node 22/24; một job riêng chạy Chromium để kiểm tra streaming, sao chép, tìm lịch sử, khôi phục trang, dừng/tạo lại, đổi tên/xoá, upload PDF/mở nguồn, quản lý ký ức, chat không lưu và giao diện mobile. Khi browser test lỗi, tải báo cáo/trace ở mục Artifacts. CI không cần API key và chỉ có quyền đọc mã nguồn.
+GitHub Actions tự chạy khi push lên `main`, khi có pull request, hoặc bấm **Run workflow** tại [Actions](https://github.com/NguyenNghiDuc/Huanluyenal/actions/workflows/ci.yml). CI kiểm thử và build trên Node 22/24; một job riêng chạy Chromium để kiểm tra streaming, sao chép, tìm lịch sử, khôi phục trang, dừng/tạo lại, đổi tên/xoá, upload PDF/mở nguồn, quản lý ký ức, chat không lưu, tách không gian, tạo/sửa kế hoạch, xuất lịch, hộp chờ duyệt gửi và giao diện mobile. Khi browser test lỗi, tải báo cáo/trace ở mục Artifacts. CI không cần API key và chỉ có quyền đọc mã nguồn.
 
-Test backend bao phủ SSE, validation/CORS/rate limit, dữ liệu SQLite, persona, ký ức, BM25, tool loop, duyệt kiến thức và tìm lịch sử; có PDF thật hai trang, giới hạn upload, thử lại/khôi phục xử lý dở, nguồn bị thay đổi và tính riêng tư của chat tạm thời. Test frontend bao phủ Markdown an toàn, tô màu mã, clipboard, tiếng Việt và storage bị chặn. SDK Anthropic được kiểm tra với dữ liệu SSE trong test; cần key thật để kiểm tra câu trả lời từ API Anthropic.
+Test backend bao phủ SSE, validation/CORS/rate limit, dữ liệu SQLite, persona, ký ức, BM25, tool loop, duyệt kiến thức và tìm lịch sử; có PDF thật hai trang, giới hạn upload, thử lại/khôi phục xử lý dở, nguồn bị thay đổi, tính riêng tư của chat tạm thời, truy cập chéo không gian, phiên bản bản nháp và gửi đồng thời/duyệt lặp/thử lại webhook. Test frontend bao phủ Markdown an toàn, tô màu mã, clipboard, tiếng Việt và storage bị chặn. SDK Anthropic được kiểm tra với dữ liệu SSE trong test; cần key thật để kiểm tra câu trả lời từ API Anthropic.
 
-Input tối đa 8000 ký tự, JSON body 64 KiB, giới hạn 120 request API/phút/IP và 15 lượt chat/phút/IP. Mỗi lượt chat có timeout tổng 90 giây; SDK timeout 60 giây, trích xuất trí nhớ 20 giây, so sánh ký ức thủ công 10 giây. Upload giới hạn riêng 10 lần/phút/IP. Lịch sử gửi model giới hạn 40 tin nhắn/60.000 ký tự gần nhất. Giới hạn rate mặc định dùng IP socket; khi triển khai sau proxy cần cấu hình `trust proxy` theo đúng hạ tầng.
+Input tối đa 8000 ký tự, JSON body 64 KiB, giới hạn 120 request API/phút/IP và 15 lượt chat/phút/IP. Mỗi lượt chat có timeout tổng 90 giây; SDK timeout 60 giây, trích xuất trí nhớ 20 giây, so sánh ký ức thủ công 10 giây, soạn bản nháp 30 giây. Chạy một tiến trình backend cho thư mục dữ liệu này. Upload giới hạn riêng 10 lần/phút/IP. Lịch sử gửi model giới hạn 40 tin nhắn/60.000 ký tự gần nhất. Giới hạn rate mặc định dùng IP socket; khi triển khai sau proxy cần cấu hình `trust proxy` theo đúng hạ tầng.
 
 ## Cấu trúc
 
 ```text
 server/       index.js, llm.js, db.js, memory.js, memory-routes.js,
               documents.js, pdf-worker.js, rag.js, learning.js,
-              persona.md, tools/, test/, .env.example
+              workspaces.js, workflows.js, http.js, persona.md, tools/, test/, .env.example
 web/src/      App.jsx, api.js, components/, session.js, search.js, test/, style.css
 .github/      workflows/ci.yml
 e2e/          kiểm thử Chromium và server fixture
 knowledge/    .md/.txt, learned/ (đã duyệt), uploads/ (văn bản dẫn xuất)
-data/         SQLite, documents/ (bản gốc), được loại khỏi git
+data/         SQLite, documents/ (bản gốc), .workspaces/ (không gian khác), ngoài git
 ```

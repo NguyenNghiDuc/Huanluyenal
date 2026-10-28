@@ -1,9 +1,17 @@
 const KEY = "al.session.v1";
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const pages = new Set(["chat", "memories", "knowledge", "learned"]);
-export function readSession() {
+const pages = new Set([
+  "chat",
+  "memories",
+  "knowledge",
+  "learned",
+  "actions",
+  "workspaces",
+]);
+const sessionKey = (id) => (id === "personal" ? KEY : KEY + ":" + id);
+export function readSession(workspaceId = "personal") {
   try {
-    const value = JSON.parse(localStorage.getItem(KEY));
+    const value = JSON.parse(localStorage.getItem(sessionKey(workspaceId)));
     return {
       conversationId: uuid.test(value?.conversationId)
         ? value.conversationId
@@ -14,9 +22,12 @@ export function readSession() {
     return { conversationId: null, page: "chat" };
   }
 }
-export function saveSession(conversationId, page) {
+export function saveSession(conversationId, page, workspaceId = "personal") {
   try {
-    localStorage.setItem(KEY, JSON.stringify({ conversationId, page }));
+    localStorage.setItem(
+      sessionKey(workspaceId),
+      JSON.stringify({ conversationId, page }),
+    );
   } catch {
     /* Browser storage may be disabled; chat still works. */
   }

@@ -188,6 +188,9 @@ test("privacy: multi-turn private chat performs no persistent writes, memory rea
           "memories",
           "learned_pending",
           "memory_conflicts",
+          "artifacts",
+          "artifact_tasks",
+          "outbox",
         ].map((t) => [t, db.prepare("SELECT count(*) AS n FROM " + t).get().n]),
       );
     const before = count();

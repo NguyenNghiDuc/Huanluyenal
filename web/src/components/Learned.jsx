@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
-import { api } from "../api";
+import { useWorkspaceApi } from "../WorkspaceContext";
 export default function Learned() {
+  const { api, workspace, downloadUrl } = useWorkspaceApi();
   const [items, setItems] = useState([]),
     [error, setError] = useState(""),
     [notice, setNotice] = useState(""),

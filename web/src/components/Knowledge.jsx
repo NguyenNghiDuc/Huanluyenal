@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { api } from "../api";
+import { useWorkspaceApi } from "../WorkspaceContext";
 const labels = {
   queued: "Đang chờ",
   processing: "Đang trích văn bản",
@@ -7,10 +7,11 @@ const labels = {
   ready: "Sẵn sàng",
   error: "Cần xử lý",
 };
-function uploadFile(file, onProgress, signal) {
+function uploadFile(file, onProgress, signal, workspaceId) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open("POST", "/api/documents");
+    xhr.setRequestHeader("X-Workspace-Id", workspaceId);
     xhr.responseType = "json";
     xhr.timeout = 60000;
     const stop = () => xhr.abort();
@@ -34,6 +35,7 @@ function uploadFile(file, onProgress, signal) {
   });
 }
 export default function Knowledge({ onOpenSource }) {
+  const { api, workspace, downloadUrl } = useWorkspaceApi();
   const [data, setData] = useState(null),
     [docs, setDocs] = useState([]),
     [error, setError] = useState(""),
@@ -108,6 +110,7 @@ export default function Knowledge({ onOpenSource }) {
               rows.map((r) => (r.id === id ? { ...r, progress } : r)),
             ),
           uploadAbort.current.signal,
+          workspace.id,
         );
         setUploads((rows) => rows.filter((r) => r.id !== id));
         await load(uploadAbort.current.signal);
@@ -267,7 +270,7 @@ export default function Knowledge({ onOpenSource }) {
                 )}
                 <a
                   className="button-link secondary"
-                  href={"/api/documents/" + doc.id + "/file"}
+                  href={downloadUrl("/api/documents/" + doc.id + "/file")}
                 >
                   Tải bản gốc
                 </a>

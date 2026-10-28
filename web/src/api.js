@@ -15,10 +15,18 @@ export async function api(path, options = {}) {
     throw new ApiError(data.error || "Yêu cầu thất bại.", response.status);
   return data;
 }
-export async function streamChat(body, signal, onEvent) {
+export async function streamChat(
+  body,
+  signal,
+  onEvent,
+  workspaceId = "personal",
+) {
   const response = await fetch("/api/chat", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "X-Workspace-Id": workspaceId,
+    },
     body: JSON.stringify(body),
     signal,
   });

@@ -27,6 +27,8 @@ export function safeKnowledgePath(root, path) {
   // Reject symlinks at every path segment, even those pointing inside the root.
   let current = base;
   for (const part of rel.split(sep)) {
+    if (part.startsWith("."))
+      throw new Error("Không cho phép file hoặc thư mục ẩn.");
     current = resolve(current, part);
     if (lstatSync(current).isSymbolicLink())
       throw new Error("Không cho phép symlink.");

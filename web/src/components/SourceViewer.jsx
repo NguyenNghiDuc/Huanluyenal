@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from "react";
-import { api } from "../api";
+import { useWorkspaceApi } from "../WorkspaceContext";
 import Modal from "./Modal";
 export default function SourceViewer({ source, onClose }) {
+  const { api, workspace, downloadUrl } = useWorkspaceApi();
   const [chunk, setChunk] = useState(source.chunk),
     [data, setData] = useState(null),
     [error, setError] = useState("");
@@ -57,7 +58,9 @@ export default function SourceViewer({ source, onClose }) {
             {data.documentId && (
               <a
                 className="button-link"
-                href={"/api/documents/" + data.documentId + "/file"}
+                href={downloadUrl(
+                  "/api/documents/" + data.documentId + "/file",
+                )}
               >
                 Tải bản gốc
               </a>

@@ -6,6 +6,7 @@ export default function Chat({
   temporary,
   onToggleTemporary,
   onRemember,
+  onCreateAction,
   onOpenSource,
   focusMessageId,
   messages,
@@ -140,6 +141,15 @@ export default function Chat({
                     onClick={() => onRemember(m)}
                   >
                     Ghi nhớ điều này
+                  </button>
+                )}
+                {!temporary && !busy && m.id && (
+                  <button
+                    type="button"
+                    className="copy-button"
+                    onClick={() => onCreateAction(m)}
+                  >
+                    Tạo công việc / tài liệu
                   </button>
                 )}
                 <CopyButton

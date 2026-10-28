@@ -1150,3 +1150,372 @@ article .message-actions {
     font-size: 11px;
   }
 }
+.workspace-loading {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 15px;
+}
+.workspace-picker {
+  display: block;
+}
+.workspace-picker > span {
+  display: block;
+  font-size: 9px;
+  letter-spacing: 1.5px;
+  color: #91aa9d;
+  margin-bottom: 8px;
+}
+.workspace-picker select {
+  width: 100%;
+  background: #22382d;
+  color: #d2eddf;
+  border: 1px solid #4b6958;
+  border-radius: 9px;
+  padding: 10px;
+  font: inherit;
+}
+.settings-form {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+.settings-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: #b1c9ba;
+  font-size: 13px;
+}
+.settings-form input,
+.settings-form select,
+.settings-form textarea,
+.action-filters input,
+.action-filters select,
+.add-task input,
+.task-top select {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  background: #132119;
+  color: #e0ece5;
+  border: 1px solid #455f4e;
+  border-radius: 8px;
+  padding: 10px;
+  font: inherit;
+}
+.settings-form textarea {
+  min-height: 90px;
+  max-height: 300px;
+}
+.settings-form textarea.draft-body {
+  min-height: 200px;
+}
+.settings-form button {
+  align-self: flex-start;
+}
+.source-excerpt {
+  white-space: pre-wrap;
+  max-height: 170px;
+  overflow: auto;
+  background: #122019;
+  padding: 15px;
+  border-left: 3px solid #7ca78f;
+  margin: 20px 0;
+  line-height: 1.7;
+}
+.tab-bar {
+  display: flex;
+  gap: 6px;
+  border-bottom: 1px solid #374b3e;
+  padding-bottom: 12px;
+  margin: 24px 0;
+}
+.tab-bar button {
+  background: transparent;
+  color: #a8c2b4;
+}
+.tab-bar button[aria-selected="true"] {
+  background: #2d4b3a;
+  color: #d8efdf;
+}
+.action-filters {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 18px 0;
+}
+.action-filters input {
+  flex: 2;
+  min-width: 150px;
+}
+.action-filters select {
+  flex: 1;
+  min-width: 130px;
+}
+.artifact-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 310px), 1fr));
+  gap: 15px;
+}
+.artifact-card {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.artifact-card h2 {
+  font-size: 20px;
+  margin: 10px 0 0;
+  overflow-wrap: anywhere;
+}
+.artifact-card p {
+  margin: 0;
+}
+.artifact-card button {
+  margin-top: 10px;
+  align-self: flex-start;
+}
+.task-card {
+  border: 1px solid #3c5947;
+  border-radius: 10px;
+  padding: 14px;
+  margin: 12px 0;
+}
+.task-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 15px;
+}
+.task-top strong {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.task-top strong.done {
+  text-decoration: line-through;
+  color: #91b09b;
+}
+.task-top select {
+  max-width: 145px;
+  font-size: 12px;
+}
+.task-details {
+  margin-top: 12px;
+}
+.task-details summary {
+  font-size: 12px;
+  color: #abc9b6;
+  cursor: pointer;
+}
+.task-details .settings-form {
+  margin-top: 15px;
+}
+.field-row {
+  display: flex;
+  gap: 12px;
+}
+.field-row > * {
+  flex: 1;
+  min-width: 0;
+}
+.add-task {
+  display: flex;
+  gap: 8px;
+  padding: 10px;
+  margin-top: 15px;
+}
+.add-task button {
+  white-space: nowrap;
+}
+.export-actions {
+  border-top: 1px solid #41584a;
+  padding-top: 18px;
+  margin-top: 25px;
+}
+.outbox-card h2 {
+  font-size: 20px;
+}
+.outbox-card .card {
+  background: #122018;
+}
+.outbox-card li {
+  line-height: 1.8;
+  overflow-wrap: anywhere;
+}
+.outbox-card li p {
+  margin-top: 4px;
+}
+.modal section {
+  min-height: 0;
+}
+.artifact-card progress {
+  margin-top: auto;
+}
+@media (max-width: 760px) {
+  aside {
+    gap: 12px;
+  }
+  .brand {
+    margin-bottom: 0;
+  }
+  .workspace-picker > span {
+    font-size: 8px;
+  }
+  .workspace-picker select {
+    font-size: 12px;
+  }
+  .task-top {
+    align-items: flex-start;
+  }
+  .field-row {
+    flex-wrap: wrap;
+  }
+  .outbox-card .document-heading {
+    flex-wrap: wrap;
+  }
+}
+@media (max-width: 520px) {
+  .workspace-picker > span {
+    display: none;
+  }
+  .workspace-picker select {
+    padding: 7px 10px;
+    font-size: 12px;
+  }
+  aside {
+    gap: 5px;
+  }
+  .brand {
+    display: none;
+  }
+  nav button {
+    font-size: 10px;
+    padding: 5px;
+  }
+  .history-search input {
+    padding: 6px 28px 6px 10px;
+  }
+  .conversation-list {
+    max-height: 65px;
+  }
+  .add-task {
+    flex-wrap: wrap;
+  }
+  .add-task button {
+    padding: 8px 12px;
+  }
+  .task-top {
+    flex-direction: column;
+    gap: 8px;
+  }
+  .task-top select {
+    max-width: none;
+  }
+  .tab-bar button {
+    font-size: 12px;
+    padding: 10px;
+  }
+  .action-filters select {
+    font-size: 12px;
+  }
+  .export-actions .button-link {
+    padding: 9px;
+  }
+  .modal {
+    max-height: 90dvh;
+  }
+}
+.outbox-json {
+  margin: 15px 0;
+  font-size: 12px;
+}
+.outbox-json summary {
+  cursor: pointer;
+  color: #a6c8b4;
+}
+.outbox-json pre {
+  max-height: 350px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: #0f1d14;
+  padding: 15px;
+  border-radius: 8px;
+}
+/* Keep the conversation list reachable on short desktop screens. */
+aside {
+  padding: 18px 16px;
+  gap: 12px;
+  overflow-y: auto;
+}
+aside > * {
+  flex-shrink: 0;
+}
+nav {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+}
+nav button {
+  font-size: 12px;
+  padding: 9px 7px;
+  line-height: 1.5;
+}
+.conversation-list {
+  min-height: 85px;
+  flex: 1 1 auto;
+  overflow-y: auto;
+}
+.brand {
+  margin-bottom: 2px;
+}
+.history-heading .label {
+  margin-top: 0;
+}
+footer {
+  padding-top: 12px;
+}
+@media (max-width: 760px) {
+  aside {
+    padding: 16px 10px;
+    gap: 9px;
+  }
+  nav {
+    grid-template-columns: 1fr;
+  }
+  nav button {
+    font-size: 11px;
+    padding: 7px;
+  }
+  .conversation-list {
+    min-height: 70px;
+  }
+}
+@media (max-width: 520px) {
+  aside {
+    padding: 9px 12px;
+    gap: 5px;
+    overflow-y: visible;
+  }
+  nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px;
+  }
+  nav button {
+    font-size: 10px;
+    padding: 5px;
+  }
+  .conversation-list {
+    min-height: 0;
+    max-height: 65px;
+    flex: initial;
+  }
+  footer {
+    display: none;
+  }
+}
+fieldset.settings-form{border:0;padding:0;margin-top:14px;min-width:0}fieldset:disabled{opacity:.65}

@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from "react";
-import { api } from "../api";
+import { useWorkspaceApi } from "../WorkspaceContext";
 import MemoryEditor from "./MemoryEditor";
 export default function Memories() {
+  const { api, workspace, downloadUrl } = useWorkspaceApi();
   const [items, setItems] = useState([]),
     [conflicts, setConflicts] = useState([]),
     [settings, setSettings] = useState(null),

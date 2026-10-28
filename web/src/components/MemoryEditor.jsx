@@ -1,7 +1,8 @@
 import React, { useState } from "react";
-import { api } from "../api";
+import { useWorkspaceApi } from "../WorkspaceContext";
 import Modal from "./Modal";
 export default function MemoryEditor({ message, onClose, onSaved }) {
+  const { api, workspace, downloadUrl } = useWorkspaceApi();
   const [content, setContent] = useState(message.content.slice(0, 500)),
     [saving, setSaving] = useState(false),
     [error, setError] = useState("");

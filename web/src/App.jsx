@@ -1,5 +1,9 @@
 import React, { useEffect, useState, useRef, useCallback } from "react";
-import { api, streamChat } from "./api";
+import { useWorkspaceApi } from "./WorkspaceContext";
+import WorkspaceShell from "./WorkspaceShell";
+const Workspaces = React.lazy(() => import("./components/Workspaces"));
+const Actions = React.lazy(() => import("./components/Actions"));
+const ActionComposer = React.lazy(() => import("./components/ActionComposer"));
 import Sidebar from "./components/Sidebar";
 import Chat from "./components/Chat";
 import Memories from "./components/Memories";
@@ -23,7 +27,7 @@ const pause = (ms, signal) =>
     if (signal?.aborted) stop();
     else signal?.addEventListener("abort", stop, { once: true });
   });
-async function settledConversation(id, signal) {
+async function settledConversation(api, id, signal) {
   let data = await api("/conversations/" + id, { signal });
   for (let retry = 0; data.generating && retry < 45; retry++) {
     await pause(2000, signal);
@@ -34,8 +38,21 @@ async function settledConversation(id, signal) {
   return data;
 }
 export default function App() {
+  return (
+    <WorkspaceShell>
+      {(props) => <AssistantApp key={props.workspace.id} {...props} />}
+    </WorkspaceShell>
+  );
+}
+function AssistantApp({
+  workspace,
+  workspaces,
+  selectWorkspace,
+  refreshWorkspaces,
+}) {
+  const { api, streamChat } = useWorkspaceApi();
   const initial = useRef(null);
-  if (!initial.current) initial.current = readSession();
+  if (!initial.current) initial.current = readSession(workspace.id);
   const [items, setItems] = useState([]),
     [selected, setSelected] = useState(null),
     [messages, setMessages] = useState([]),
@@ -51,7 +68,9 @@ export default function App() {
     [temporary, setTemporary] = useState(false),
     [openSource, setOpenSource] = useState(null),
     [rememberMessage, setRememberMessage] = useState(null),
-    [notice, setNotice] = useState("");
+    [notice, setNotice] = useState(""),
+    [composeMessage, setComposeMessage] = useState(null),
+    [actionNotice, setActionNotice] = useState("");
   const abort = useRef(),
     selectionAbort = useRef(),
     busyRef = useRef(false),
@@ -75,6 +94,7 @@ export default function App() {
       if (saved.conversationId) {
         try {
           data = await settledConversation(
+            api,
             saved.conversationId,
             controller.signal,
           );
@@ -105,7 +125,7 @@ export default function App() {
     };
   }, [initialize]);
   useEffect(() => {
-    if (ready) saveSession(selected, page);
+    if (ready) saveSession(selected, page, workspace.id);
   }, [selected, page, ready]);
   async function select(item) {
     if (busyRef.current) return;
@@ -122,7 +142,7 @@ export default function App() {
     setLoading(true);
     setError("");
     try {
-      const data = await settledConversation(item.id, controller.signal);
+      const data = await settledConversation(api, item.id, controller.signal);
       if (seq !== selectionSeq.current) return;
       setTemporary(false);
       setNotice("");
@@ -233,8 +253,10 @@ export default function App() {
           if (event === "meta" && !temporary) {
             id = data.conversationId;
             setSelected(id);
-            saveSession(id, "chat");
+            saveSession(id, "chat", workspace.id);
           }
+          if (event === "artifact")
+            setActionNotice("Đã tạo bản nháp: " + data.title);
           if (event === "sources") {
             setSources(data.sources);
             setMessages((ms) =>
@@ -270,7 +292,7 @@ export default function App() {
     } finally {
       if (id && !temporary) {
         try {
-          const data = await settledConversation(id);
+          const data = await settledConversation(api, id);
           setMessages(data.messages);
         } catch (e) {
           setError(e.message);
@@ -288,6 +310,17 @@ export default function App() {
   return (
     <div className="layout">
       <Sidebar
+        workspace={workspace}
+        workspaces={workspaces}
+        onWorkspace={(id) => {
+          if (
+            temporary &&
+            messages.length &&
+            !confirm("Rời chat tạm thời? Nội dung sẽ không thể khôi phục.")
+          )
+            return;
+          selectWorkspace(id);
+        }}
         items={search.items}
         selected={selected}
         busy={busy || loading || !ready}
@@ -317,6 +350,18 @@ export default function App() {
             </div>
           </div>
         )}
+        {actionNotice && (
+          <div className="notice" role="status">
+            {actionNotice}
+            <button onClick={() => setPage("actions")}>Mở Công việc</button>
+            <button
+              aria-label="Đóng thông báo công việc"
+              onClick={() => setActionNotice("")}
+            >
+              ×
+            </button>
+          </div>
+        )}
         {notice && (
           <div className="notice" role="status">
             {notice}
@@ -329,40 +374,76 @@ export default function App() {
             </button>
           </div>
         )}
-        {loading ? (
-          <div className="page" role="status">
-            <p>Đang tải và đồng bộ hội thoại…</p>
-          </div>
-        ) : !ready ? (
-          <div className="page">
-            <h1>Chưa thể tải dữ liệu</h1>
-            <button onClick={initialize}>Tải lại hội thoại</button>
-          </div>
-        ) : page === "memories" ? (
-          <Memories />
-        ) : page === "knowledge" ? (
-          <Knowledge onOpenSource={setOpenSource} />
-        ) : page === "learned" ? (
-          <Learned />
-        ) : (
-          <Chat
-            key={temporary ? "temporary" : selected || "new"}
-            temporary={temporary}
-            onToggleTemporary={() => newChat(!temporary)}
-            onRemember={setRememberMessage}
-            onOpenSource={setOpenSource}
-            title={items.find((i) => i.id === selected)?.title}
-            focusMessageId={focusMessageId}
-            sources={sources}
-            messages={messages}
-            busy={busy}
-            status={status}
-            onSend={send}
-            onStop={() => abort.current?.abort()}
-            onRegenerate={() => send(null, true)}
-          />
-        )}
+        <React.Suspense
+          fallback={
+            <div className="page" role="status">
+              Đang mở trang…
+            </div>
+          }
+        >
+          {loading ? (
+            <div className="page" role="status">
+              <p>Đang tải và đồng bộ hội thoại…</p>
+            </div>
+          ) : !ready ? (
+            <div className="page">
+              <h1>Chưa thể tải dữ liệu</h1>
+              <button onClick={initialize}>Tải lại hội thoại</button>
+            </div>
+          ) : page === "actions" ? (
+            <Actions />
+          ) : page === "workspaces" ? (
+            <Workspaces
+              workspace={workspace}
+              onChanged={refreshWorkspaces}
+              onSelect={selectWorkspace}
+            />
+          ) : page === "memories" ? (
+            <Memories />
+          ) : page === "knowledge" ? (
+            <Knowledge onOpenSource={setOpenSource} />
+          ) : page === "learned" ? (
+            <Learned />
+          ) : (
+            <Chat
+              key={temporary ? "temporary" : selected || "new"}
+              temporary={temporary}
+              onToggleTemporary={() => newChat(!temporary)}
+              onRemember={setRememberMessage}
+              onCreateAction={setComposeMessage}
+              onOpenSource={setOpenSource}
+              title={items.find((i) => i.id === selected)?.title}
+              focusMessageId={focusMessageId}
+              sources={sources}
+              messages={messages}
+              busy={busy}
+              status={status}
+              onSend={send}
+              onStop={() => abort.current?.abort()}
+              onRegenerate={() => send(null, true)}
+            />
+          )}
+        </React.Suspense>
       </main>
+      {composeMessage && (
+        <React.Suspense
+          fallback={
+            <div className="notice" role="status">
+              Đang mở trình soạn bản nháp…
+            </div>
+          }
+        >
+          <ActionComposer
+            message={composeMessage}
+            onClose={() => setComposeMessage(null)}
+            onCreated={(a) => {
+              setActionNotice("Đã tạo bản nháp: " + a.title);
+              setComposeMessage(null);
+              setPage("actions");
+            }}
+          />
+        </React.Suspense>
+      )}
       {openSource && (
         <SourceViewer
           key={openSource.source + ":" + openSource.chunk}
