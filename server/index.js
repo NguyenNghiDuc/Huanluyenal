@@ -16,16 +16,34 @@ import {
 import { createRag, ragContext, KNOWLEDGE_ROOT } from "./rag.js";
 import { createTools } from "./tools/index.js";
 import { approve } from "./learning.js";
+import { memoryRoutes } from "./memory-routes.js";
+import {
+  createDocumentManager,
+  documentRoutes,
+  documentMetadata,
+  DOCUMENTS_ROOT,
+} from "./documents.js";
 import { searchConversations } from "./search.js";
 export function createApp({
   generate = answer,
   db = openDB(),
   extract = extractFacts,
+  compareMemory,
   knowledgeRoot = KNOWLEDGE_ROOT,
+  documentsRoot = DOCUMENTS_ROOT,
   personaPath = fileURLToPath(new URL("./persona.md", import.meta.url)),
 } = {}) {
   const app = express();
-  const rag = createRag(knowledgeRoot);
+  const rag = createRag(knowledgeRoot, {
+    metadataForSource: (source) => documentMetadata(db, source),
+  });
+  const documentManager = createDocumentManager({
+    db,
+    root: knowledgeRoot,
+    storageRoot: documentsRoot,
+    rag,
+  });
+  app.locals.documents = documentManager;
   const active = new Set();
   app.locals.db = db;
   const origin = process.env.WEB_ORIGIN || "http://localhost:5173";
@@ -35,6 +53,10 @@ export function createApp({
     next();
   });
   app.use(cors({ origin }));
+  app.use("/api", (_, res, next) => {
+    res.set("Cache-Control", "no-store");
+    next();
+  });
   app.use(express.json({ limit: "64kb" }));
   app.use(
     "/api",
@@ -117,39 +139,8 @@ export function createApp({
     res.json({ ok: true });
   });
   app.get("/api/knowledge", (_, res) => res.json(rag.info()));
-  app.get("/api/memories", (_, res) => res.json(listMemories(db)));
-  app.patch("/api/memories/:id", (req, res) => {
-    const p = z
-      .object({ content: z.string().trim().min(1).max(500) })
-      .strict()
-      .safeParse(req.body);
-    if (!z.uuid().safeParse(req.params.id).success || !p.success)
-      return res
-        .status(400)
-        .json({ error: "Ký ức không hợp lệ (1–500 ký tự)." });
-    try {
-      const result = db
-        .prepare(
-          "UPDATE memories SET content=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?",
-        )
-        .run(p.data.content, req.params.id);
-      res
-        .status(result.changes ? 200 : 404)
-        .json(
-          result.changes ? { ok: true } : { error: "Không tìm thấy ký ức." },
-        );
-    } catch {
-      res.status(409).json({ error: "Ký ức này đã tồn tại." });
-    }
-  });
-  app.delete("/api/memories/:id", (req, res) => {
-    if (!z.uuid().safeParse(req.params.id).success)
-      return res.status(400).json({ error: "ID không hợp lệ." });
-    const r = db.prepare("DELETE FROM memories WHERE id=?").run(req.params.id);
-    res
-      .status(r.changes ? 200 : 404)
-      .json(r.changes ? { ok: true } : { error: "Không tìm thấy ký ức." });
-  });
+  app.use("/api", memoryRoutes(db, { compare: compareMemory }));
+  app.use("/api", documentRoutes(documentManager, db, rag));
   app.get("/api/learned", (_, res) =>
     res.json(
       db
@@ -209,57 +200,88 @@ export function createApp({
       message: { error: "Bạn gửi tin nhắn quá nhanh. Hãy chờ một phút." },
     }),
     async (req, res) => {
-      const parsed = z
+      const persistent = z
         .object({
           message: z.string().max(8000).trim().min(1).optional(),
           conversationId: z.uuid().optional(),
           regenerate: z.boolean().optional(),
+          temporary: z.literal(false).optional(),
         })
         .strict()
         .refine((v) =>
           v.regenerate ? !!v.conversationId && !v.message : !!v.message,
-        )
-        .safeParse(req.body);
-      if (!parsed.success)
-        return res.status(400).json({
-          error:
-            "Tin nhắn phải có từ 1 đến 8000 ký tự; yêu cầu tạo lại cần ID hội thoại.",
-        });
-      const body = parsed.data;
-      let conversation = body.conversationId
-        ? db
-            .prepare("SELECT * FROM conversations WHERE id=?")
-            .get(body.conversationId)
-        : createConversation(db, body.message.slice(0, 60));
-      if (!conversation)
-        return res.status(404).json({ error: "Không tìm thấy hội thoại." });
-      const id = conversation.id;
-      if (active.has(id))
-        return res
-          .status(409)
-          .json({ error: "al đang trả lời trong hội thoại này." });
-      if (body.regenerate) {
-        const lastUser = db
-          .prepare(
-            "SELECT id FROM messages WHERE conversation_id=? AND role='user' ORDER BY id DESC LIMIT 1",
-          )
-          .get(id);
-        if (!lastUser)
-          return res
-            .status(400)
-            .json({ error: "Chưa có tin nhắn để tạo lại." });
-        db.prepare("DELETE FROM messages WHERE conversation_id=? AND id>?").run(
-          id,
-          lastUser.id,
         );
-      } else addMessage(db, id, "user", body.message);
-      active.add(id);
+      const temporary = z
+        .object({
+          temporary: z.literal(true),
+          messages: z
+            .array(
+              z
+                .object({
+                  role: z.enum(["user", "assistant"]),
+                  content: z.string().min(1).max(40000),
+                })
+                .strict(),
+            )
+            .min(1)
+            .max(40),
+        })
+        .strict()
+        .refine(
+          (v) =>
+            v.messages[0].role === "user" &&
+            v.messages.at(-1).role === "user" &&
+            v.messages.every(
+              (m) => m.role !== "user" || m.content.length <= 8000,
+            ) &&
+            v.messages.reduce((n, m) => n + m.content.length, 0) <= 60000,
+        );
+      const parsed = z.union([persistent, temporary]).safeParse(req.body);
+      if (!parsed.success)
+        return res
+          .status(400)
+          .json({
+            error:
+              "Yêu cầu chat không hợp lệ. Tin nhắn tối đa 8000 ký tự; chat tạm thời chỉ nhận lịch sử giới hạn và không kèm ID hội thoại.",
+          });
+      const body = parsed.data,
+        isTemporary = body.temporary === true;
+      let id = null;
+      if (!isTemporary) {
+        const conversation = body.conversationId
+          ? db
+              .prepare("SELECT * FROM conversations WHERE id=?")
+              .get(body.conversationId)
+          : createConversation(db, body.message.slice(0, 60));
+        if (!conversation)
+          return res.status(404).json({ error: "Không tìm thấy hội thoại." });
+        id = conversation.id;
+        if (active.has(id))
+          return res
+            .status(409)
+            .json({ error: "al đang trả lời trong hội thoại này." });
+        if (body.regenerate) {
+          const lastUser = db
+            .prepare(
+              "SELECT id FROM messages WHERE conversation_id=? AND role='user' ORDER BY id DESC LIMIT 1",
+            )
+            .get(id);
+          if (!lastUser)
+            return res
+              .status(400)
+              .json({ error: "Chưa có tin nhắn để tạo lại." });
+          db.prepare(
+            "DELETE FROM messages WHERE conversation_id=? AND id>?",
+          ).run(id, lastUser.id);
+        } else addMessage(db, id, "user", body.message);
+        active.add(id);
+      }
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 90000);
       res.on("close", () => controller.abort());
       res.set({
         "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
+        "Cache-Control": "no-store",
         Connection: "keep-alive",
         "X-Accel-Buffering": "no",
       });
@@ -268,14 +290,15 @@ export function createApp({
         if (!res.destroyed)
           res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
       };
-      send("meta", { conversationId: id });
+      send("meta", { conversationId: id, temporary: isTemporary });
       const heartbeat = setInterval(() => {
         if (!res.destroyed) res.write(": ping\n\n");
       }, 15000);
       let output = "",
-        saved = false;
+        saved = false,
+        sources = [];
       try {
-        const latest = history(db, id)
+        const latest = (isTemporary ? body.messages : history(db, id))
           .filter((m) => m.content)
           .slice(-40);
         const messages = [];
@@ -289,7 +312,7 @@ export function createApp({
         while (messages[0]?.role === "assistant") messages.shift();
         const query =
           [...messages].reverse().find((m) => m.role === "user")?.content || "";
-        let sources = [];
+
         try {
           sources = rag.search(query);
         } catch {
@@ -298,15 +321,20 @@ export function createApp({
           });
         }
         send("sources", {
-          sources: sources.map(({ source, chunk }) => ({ source, chunk })),
+          sources: sources.map(({ content, score, ...citation }) => citation),
         });
         await generate({
           messages,
-          tools: createTools({ root: knowledgeRoot, db, conversationId: id }),
+          tools: createTools({
+            root: knowledgeRoot,
+            ...(!isTemporary ? { db, conversationId: id } : {}),
+          }),
           onStatus: (message) => send("status", { message }),
           system:
             readFileSync(personaPath, "utf8") +
-            memoryContext(db) +
+            (isTemporary
+              ? "\nĐây là chat tạm thời. Không ghi nhớ hoặc đề xuất lưu kiến thức; không tuyên bố đã lưu thông tin."
+              : memoryContext(db)) +
             ragContext(sources),
           signal: controller.signal,
           onText: (text) => {
@@ -316,29 +344,49 @@ export function createApp({
         });
         if (controller.signal.aborted)
           throw new DOMException("Stopped", "AbortError");
-        addMessage(db, id, "assistant", output);
-        saved = true;
-        send("status", { message: "Đang cập nhật trí nhớ…" });
-        try {
-          await remember({
+        if (!isTemporary) {
+          addMessage(
             db,
             id,
-            messages: [...messages, { role: "assistant", content: output }],
-            signal: controller.signal,
-            extract,
-          });
-        } catch {
-          send("warning", {
-            message: "Câu trả lời đã lưu; lần này chưa thể cập nhật trí nhớ.",
-          });
+            "assistant",
+            output,
+            "complete",
+            sources.map(({ content, score, ...citation }) => citation),
+          );
+          saved = true;
+          send("status", { message: "Đang cập nhật trí nhớ…" });
+          try {
+            const result = await remember({
+              db,
+              id,
+              messages: [...messages, { role: "assistant", content: output }],
+              signal: controller.signal,
+              extract,
+            });
+            if (result.conflicts)
+              send("memory_conflict", {
+                message: `Có ${result.conflicts} ký ức có thể mâu thuẫn. Mở Trí nhớ để chọn thông tin đúng.`,
+              });
+          } catch {
+            send("warning", {
+              message: "Câu trả lời đã lưu; lần này chưa thể cập nhật trí nhớ.",
+            });
+          }
         }
         send("done", {});
       } catch (error) {
-        if (output && !saved)
-          addMessage(db, id, "assistant", output, "interrupted");
+        if (!isTemporary && output && !saved)
+          addMessage(
+            db,
+            id,
+            "assistant",
+            output,
+            "interrupted",
+            sources.map(({ content, score, ...citation }) => citation),
+          );
         if (!res.destroyed) send("error", { error: friendly(error) });
       } finally {
-        active.delete(id);
+        if (id) active.delete(id);
         clearTimeout(timer);
         clearInterval(heartbeat);
         res.end();
@@ -350,17 +398,19 @@ export function createApp({
   );
   app.use((error, req, res, next) => {
     if (res.headersSent) return next(error);
-    const status =
-      error.status === 413
+    const status = error.publicMessage
+      ? error.status
+      : error.status === 413
         ? 413
         : error.type === "entity.parse.failed"
           ? 400
           : 500;
     res.status(status).json({
       error:
-        status === 500
+        error.publicMessage ||
+        (status === 500
           ? "Có lỗi phía server. Vui lòng thử lại."
-          : "Yêu cầu không hợp lệ hoặc quá lớn.",
+          : "Yêu cầu không hợp lệ hoặc quá lớn."),
     });
   });
   return app;

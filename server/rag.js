@@ -7,6 +7,7 @@ import {
 } from "node:fs";
 import { resolve, relative, isAbsolute, extname, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createHash } from "node:crypto";
 export const KNOWLEDGE_ROOT = fileURLToPath(
   new URL("../knowledge/", import.meta.url),
 );
@@ -56,7 +57,10 @@ export function chunks(text, size = 500, overlap = 80) {
   }
   return result;
 }
-export function createRag(root = KNOWLEDGE_ROOT) {
+export function createRag(
+  root = KNOWLEDGE_ROOT,
+  { metadataForSource = () => null } = {},
+) {
   let fingerprint = "",
     documents = [],
     df = new Map(),
@@ -97,14 +101,31 @@ export function createRag(root = KNOWLEDGE_ROOT) {
     const next = [];
     for (const file of found) {
       const text = readFileSync(safeKnowledgePath(root, file.source), "utf8");
-      chunks(text).forEach((content, index) => {
+      const metadata = metadataForSource(file.source);
+      const chunkList = metadata?.pages?.length
+        ? metadata.pages.flatMap((p) =>
+            chunks(text.slice(p.start_offset, p.end_offset)).map((content) => ({
+              content,
+              page: p.page,
+            })),
+          )
+        : chunks(text).map((content) => ({ content }));
+      chunkList.forEach(({ content, page }, index) => {
         const tokens = tokenize(content),
           tf = new Map();
         for (const token of tokens) tf.set(token, (tf.get(token) || 0) + 1);
         next.push({
+          ...(metadata
+            ? {
+                documentId: metadata.documentId,
+                name: metadata.name,
+                page: page || 1,
+              }
+            : {}),
           source: file.source,
           chunk: index + 1,
           content,
+          hash: createHash("sha256").update(content).digest("hex"),
           length: tokens.length,
           tf,
         });
@@ -141,9 +162,13 @@ export function createRag(root = KNOWLEDGE_ROOT) {
           (tf + 1.5 * (0.25 + (0.75 * doc.length) / avgLength));
       }
       return {
+        ...(doc.documentId
+          ? { documentId: doc.documentId, name: doc.name, page: doc.page }
+          : {}),
         source: doc.source,
         chunk: doc.chunk,
         content: doc.content,
+        hash: doc.hash,
         score,
       };
     });
@@ -154,6 +179,12 @@ export function createRag(root = KNOWLEDGE_ROOT) {
   }
   return {
     search,
+    getChunks(source) {
+      refresh();
+      return documents
+        .filter((d) => d.source === source)
+        .map(({ tf, length, ...d }) => d);
+    },
     refresh,
     info() {
       refresh();
@@ -166,12 +197,23 @@ export function ragContext(sources) {
   return sources.length
     ? '\n\n<knowledge untrusted="true">\n' +
         JSON.stringify(
-          sources.map(({ source, chunk, content }) => ({
-            source,
-            chunk,
-            content,
-          })),
+          sources.map(
+            ({ source, chunk, content, documentId, name, page, hash }) => ({
+              source,
+              chunk,
+              content,
+              documentId,
+              name,
+              page,
+              citationUrl:
+                "/api/knowledge/source?path=" +
+                encodeURIComponent(source) +
+                "&chunk=" +
+                chunk +
+                (hash ? "&hash=" + hash : ""),
+            }),
+          ),
         ) +
-        "\n</knowledge>\nKhi sử dụng kiến thức trên, trích dẫn [nguồn: tên file, đoạn N]."
+        "\n</knowledge>\nKhi sử dụng kiến thức trên, trích dẫn bằng liên kết Markdown [nguồn: tên file, đoạn N](citationUrl) với đúng citationUrl của đoạn đó."
     : "";
 }

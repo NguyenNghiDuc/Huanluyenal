@@ -1,55 +1,73 @@
-// Test-only server: exercises the production routes/UI without paid API calls.
+// Test-only HTTP wrapper: each test gets fresh production routes and temporary data.
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { createServer } from "node:http";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { setTimeout as delay } from "node:timers/promises";
 import { createApp } from "../../server/index.js";
 import { openDB, createConversation, addMessage } from "../../server/db.js";
-const root = mkdtempSync(join(tmpdir(), "al-e2e-"));
-writeFileSync(join(root, "garden.md"), "Cà phê cần tưới nước hợp lý.");
-const db = openDB(join(root, "test.sqlite"));
-const seeded = createConversation(db, "Ghi chú công việc");
-addMessage(
-  db,
-  seeded.id,
-  "user",
-  "Tôi đang tìm hiểu lập trình và cơ sở dữ liệu.",
-);
-addMessage(
-  db,
-  seeded.id,
-  "assistant",
-  "## SQLite\n\nCơ sở dữ liệu **nhỏ gọn**, dùng cho ứng dụng cá nhân.",
-);
-const app = createApp({
-  db,
-  knowledgeRoot: root,
-  extract: async () => [],
-  generate: async ({ messages, onText, signal }) => {
-    const last = messages.at(-1).content;
-    if (last.includes("lỗi mạng")) throw new Error("Network error");
-    const chunks = last.includes("chậm")
-      ? ["Đang trả lời từng phần. ", "Nội dung tiếp theo."]
-      : [
-          "## Xin chào\n\nMình là **al**.\n\n",
-          '```javascript\nconst greeting = "Xin chào";\nconsole.log(greeting);\n```\n\n',
-          "| Mục | Trạng thái |\n| --- | --- |\n| Chat | Sẵn sàng |\n\n[Tham khảo](https://example.com)",
-        ];
-    for (const chunk of chunks) {
-      onText(chunk);
-      await delay(last.includes("chậm") ? 3000 : 100, undefined, { signal });
-    }
-  },
+let app, db, root;
+async function reset() {
+  if (app) {
+    await app.locals.documents.close();
+    db.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+  root = mkdtempSync(join(tmpdir(), "al-e2e-"));
+  writeFileSync(join(root, "garden.md"), "Cà phê cần tưới nước hợp lý.");
+  db = openDB(join(root, "test.sqlite"));
+  const seeded = createConversation(db, "Ghi chú công việc");
+  addMessage(
+    db,
+    seeded.id,
+    "user",
+    "Tôi đang tìm hiểu lập trình và cơ sở dữ liệu.",
+  );
+  addMessage(
+    db,
+    seeded.id,
+    "assistant",
+    "## SQLite\n\nCơ sở dữ liệu **nhỏ gọn**, dùng cho ứng dụng cá nhân.",
+  );
+  app = createApp({
+    db,
+    knowledgeRoot: root,
+    documentsRoot: join(root, ".originals"),
+    extract: async () => [],
+    compareMemory: async () => ({ conflictsWith: [], checked: true }),
+    generate: async ({ messages, onText, signal }) => {
+      const last = messages.at(-1).content;
+      if (last.includes("lỗi mạng")) throw new Error("Network error");
+      const chunks = last.includes("chậm")
+        ? ["Đang trả lời từng phần. ", "Nội dung tiếp theo."]
+        : [
+            "## Xin chào\n\nMình là **al**.\n\n",
+            '```javascript\nconst greeting = "Xin chào";\nconsole.log(greeting);\n```\n\n',
+            "| Mục | Trạng thái |\n| --- | --- |\n| Chat | Sẵn sàng |\n\n[Tham khảo](https://example.com)",
+          ];
+      for (const chunk of chunks) {
+        onText(chunk);
+        await delay(last.includes("chậm") ? 3000 : 100, undefined, { signal });
+      }
+    },
+  });
+}
+await reset();
+const server = createServer(async (req, res) => {
+  if (req.url === "/api/__test/reset" && req.method === "POST") {
+    await reset();
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end("{}");
+  } else app(req, res);
 });
-const server = app.listen(3001, "127.0.0.1", () =>
-  console.log("E2E fixture ready"),
-);
+server.listen(3001, "127.0.0.1", () => console.log("E2E fixture ready"));
 let closing = false;
 function stop() {
   if (closing) return;
   closing = true;
   server.closeAllConnections();
-  server.close(() => {
+  server.close(async () => {
+    await app.locals.documents.close();
     db.close();
     rmSync(root, { recursive: true, force: true });
     process.exit(0);

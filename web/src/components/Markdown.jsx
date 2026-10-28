@@ -78,13 +78,47 @@ const components = {
     </div>
   ),
 };
-export default memo(function Markdown({ content }) {
+export default memo(function Markdown({ content, onOpenSource }) {
+  const renderers = useMemo(
+    () => ({
+      ...components,
+      a: ({ node, children, href, ...props }) => {
+        if (onOpenSource && href?.startsWith("/api/knowledge/source?")) {
+          const params = new URL(href, "http://localhost").searchParams,
+            path = params.get("path"),
+            chunk = Number(params.get("chunk"));
+          if (path && Number.isInteger(chunk) && chunk > 0)
+            return (
+              <button
+                type="button"
+                className="citation"
+                onClick={() =>
+                  onOpenSource({
+                    source: path,
+                    chunk,
+                    hash: params.get("hash") || undefined,
+                  })
+                }
+              >
+                {children}
+              </button>
+            );
+        }
+        return (
+          <a {...props} href={href} target="_blank" rel="noopener noreferrer">
+            {children}
+          </a>
+        );
+      },
+    }),
+    [onOpenSource],
+  );
   return (
     <div className="markdown">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         skipHtml
-        components={components}
+        components={renderers}
       >
         {content}
       </ReactMarkdown>

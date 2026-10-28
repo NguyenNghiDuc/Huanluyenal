@@ -3,6 +3,10 @@ import Markdown from "./Markdown";
 import CopyButton from "./CopyButton";
 export default function Chat({
   title,
+  temporary,
+  onToggleTemporary,
+  onRemember,
+  onOpenSource,
   focusMessageId,
   messages,
   busy,
@@ -59,8 +63,31 @@ export default function Chat({
             {title || "Luôn sẵn sàng lắng nghe"}
           </span>
         </div>
-        <span className="badge">Claude Sonnet 4.6</span>
+        <div className="chat-header-actions">
+          <button
+            className={"privacy-switch " + (temporary ? "active" : "")}
+            type="button"
+            role="switch"
+            aria-checked={temporary}
+            aria-label="Chat không lưu"
+            disabled={busy}
+            onClick={onToggleTemporary}
+          >
+            {temporary ? "◈ Đang chat không lưu" : "◇ Chat không lưu"}
+          </button>
+          <span className="badge">Claude Sonnet 4.6</span>
+        </div>
       </header>
+      {temporary && (
+        <div className="privacy-banner">
+          <strong>Cuộc trò chuyện tạm thời</strong>
+          <span>
+            Không lưu lịch sử, không đọc/ghi trí nhớ, không tạo kiến thức mới.
+            Nội dung vẫn được gửi tới dịch vụ AI để trả lời. Tải lại hoặc rời
+            chat sẽ xoá nội dung này.
+          </span>
+        </div>
+      )}
       <section
         className="messages"
         ref={container}
@@ -97,7 +124,7 @@ export default function Chat({
             <small>{m.role === "user" ? "Bạn" : "al"}</small>
             {m.content ? (
               m.role === "assistant" ? (
-                <Markdown content={m.content} />
+                <Markdown content={m.content} onOpenSource={onOpenSource} />
               ) : (
                 <div className="plain-message">{m.content}</div>
               )
@@ -106,6 +133,15 @@ export default function Chat({
             )}
             {m.content && (
               <div className="message-actions">
+                {!temporary && !busy && m.id && (
+                  <button
+                    className="copy-button"
+                    type="button"
+                    onClick={() => onRemember(m)}
+                  >
+                    Ghi nhớ điều này
+                  </button>
+                )}
                 <CopyButton
                   text={m.content}
                   label={
@@ -117,18 +153,37 @@ export default function Chat({
               </div>
             )}
 
+            {!!m.sources?.length && (
+              <div className="citation-list" aria-label="Nguồn của câu trả lời">
+                {m.sources.map((s, index) => (
+                  <button
+                    className="citation"
+                    key={s.source + s.chunk}
+                    onClick={() => onOpenSource(s)}
+                  >
+                    [{index + 1}] {s.name || s.source}
+                    {s.page ? ` · trang ${s.page}` : ""} · đoạn {s.chunk}
+                  </button>
+                ))}
+              </div>
+            )}
             {m.status === "interrupted" && (
               <small>Đã dừng hoặc bị gián đoạn</small>
             )}
           </article>
         ))}
-        {!!sources?.length && (
+        {!!sources?.length && !messages.at(-1)?.sources?.length && (
           <div className="sources">
             Đoạn tài liệu tham khảo:
             {sources.map((s) => (
-              <code key={s.source + s.chunk}>
-                {s.source} · đoạn {s.chunk}
-              </code>
+              <button
+                className="citation"
+                key={s.source + s.chunk}
+                onClick={() => onOpenSource(s)}
+              >
+                {s.name || s.source}
+                {s.page ? ` · trang ${s.page}` : ""} · đoạn {s.chunk}
+              </button>
             ))}
           </div>
         )}

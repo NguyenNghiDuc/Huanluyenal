@@ -13,6 +13,8 @@
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
     "express-rate-limit": "^8.1.0",
+    "multer": "^2.5.0",
+    "pdfjs-dist": "^6.4.299",
     "zod": "^4.1.12"
   },
   "devDependencies": {

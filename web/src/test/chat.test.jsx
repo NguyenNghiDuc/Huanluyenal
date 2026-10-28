@@ -121,3 +121,25 @@ describe("session and search", () => {
     expect(matchRanges("abc", "")).toEqual([]);
   });
 });
+
+describe("private chat and citations", () => {
+  it("opens a source link inside the source viewer callback", () => {
+    const open = vi.fn();
+    render(
+      <Markdown
+        content={
+          "[nguồn: notes.md, đoạn 2](/api/knowledge/source?path=notes.md&chunk=2)"
+        }
+        onOpenSource={open}
+      />,
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "nguồn: notes.md, đoạn 2" }),
+    );
+    expect(open).toHaveBeenCalledWith({
+      source: "notes.md",
+      chunk: 2,
+      hash: undefined,
+    });
+  });
+});

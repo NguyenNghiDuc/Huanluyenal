@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures/test.js";
 test("Markdown, code copying, regeneration and restoring the open conversation", async ({
   page,
   context,

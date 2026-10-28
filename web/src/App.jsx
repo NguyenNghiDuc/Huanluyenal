@@ -7,6 +7,9 @@ import Knowledge from "./components/Knowledge";
 import Learned from "./components/Learned";
 import { readSession, saveSession } from "./session";
 import useConversationSearch from "./useConversationSearch";
+import { temporaryHistory } from "./temporary";
+import SourceViewer from "./components/SourceViewer";
+import MemoryEditor from "./components/MemoryEditor";
 const pause = (ms, signal) =>
   new Promise((resolve, reject) => {
     const stop = () => {
@@ -44,7 +47,11 @@ export default function App() {
     [status, setStatus] = useState(""),
     [sources, setSources] = useState([]),
     [query, setQuery] = useState(""),
-    [focusMessageId, setFocusMessageId] = useState(null);
+    [focusMessageId, setFocusMessageId] = useState(null),
+    [temporary, setTemporary] = useState(false),
+    [openSource, setOpenSource] = useState(null),
+    [rememberMessage, setRememberMessage] = useState(null),
+    [notice, setNotice] = useState("");
   const abort = useRef(),
     selectionAbort = useRef(),
     busyRef = useRef(false),
@@ -102,6 +109,12 @@ export default function App() {
   }, [selected, page, ready]);
   async function select(item) {
     if (busyRef.current) return;
+    if (
+      temporary &&
+      messages.length &&
+      !confirm("Rời chat tạm thời? Nội dung sẽ không thể khôi phục.")
+    )
+      return;
     const seq = ++selectionSeq.current;
     selectionAbort.current?.abort();
     const controller = new AbortController();
@@ -111,6 +124,8 @@ export default function App() {
     try {
       const data = await settledConversation(item.id, controller.signal);
       if (seq !== selectionSeq.current) return;
+      setTemporary(false);
+      setNotice("");
       setSelected(item.id);
       setSources([]);
       setMessages(data.messages);
@@ -131,8 +146,16 @@ export default function App() {
       if (seq === selectionSeq.current) setLoading(false);
     }
   }
-  function newChat() {
+  function newChat(privateMode = false) {
     if (busyRef.current || !ready) return;
+    if (
+      temporary &&
+      messages.length &&
+      !confirm("Rời chat tạm thời? Nội dung sẽ không thể khôi phục.")
+    )
+      return;
+    setTemporary(privateMode === true);
+    setNotice("");
     ++selectionSeq.current;
     selectionAbort.current?.abort();
     setLoading(false);
@@ -179,7 +202,10 @@ export default function App() {
     setFocusMessageId(null);
     setPage("chat");
     abort.current = new AbortController();
-    let id = selected;
+    let id = temporary ? null : selected;
+    const privateMessages = temporary
+      ? temporaryHistory(messages, text, regenerate)
+      : null;
     setMessages((m) =>
       regenerate
         ? [
@@ -195,17 +221,28 @@ export default function App() {
     try {
       await streamChat(
         {
-          ...(id ? { conversationId: id } : {}),
-          ...(regenerate ? { regenerate: true } : { message: text }),
+          ...(temporary
+            ? { temporary: true, messages: privateMessages }
+            : {
+                ...(id ? { conversationId: id } : {}),
+                ...(regenerate ? { regenerate: true } : { message: text }),
+              }),
         },
         abort.current.signal,
         (event, data) => {
-          if (event === "meta") {
+          if (event === "meta" && !temporary) {
             id = data.conversationId;
             setSelected(id);
             saveSession(id, "chat");
           }
-          if (event === "sources") setSources(data.sources);
+          if (event === "sources") {
+            setSources(data.sources);
+            setMessages((ms) =>
+              ms.map((m, i) =>
+                i === ms.length - 1 ? { ...m, sources: data.sources } : m,
+              ),
+            );
+          }
           if (event === "delta")
             setMessages((m) =>
               m.map((x, i) =>
@@ -214,15 +251,24 @@ export default function App() {
                   : x,
               ),
             );
+          if (event === "memory_conflict") setNotice(data.message);
           if (event === "warning") setError(data.message);
           if (event === "status") setStatus(data.message);
         },
       );
     } catch (e) {
       if (e.name !== "AbortError") setError(e.message);
-      else setStatus("Đã dừng.");
+      else {
+        setStatus("Đã dừng.");
+        if (temporary)
+          setMessages((ms) =>
+            ms.map((m, i) =>
+              i === ms.length - 1 ? { ...m, status: "interrupted" } : m,
+            ),
+          );
+      }
     } finally {
-      if (id) {
+      if (id && !temporary) {
         try {
           const data = await settledConversation(id);
           setMessages(data.messages);
@@ -271,6 +317,18 @@ export default function App() {
             </div>
           </div>
         )}
+        {notice && (
+          <div className="notice" role="status">
+            {notice}
+            <button onClick={() => setPage("memories")}>Mở Trí nhớ</button>
+            <button
+              aria-label="Đóng thông báo trí nhớ"
+              onClick={() => setNotice("")}
+            >
+              ×
+            </button>
+          </div>
+        )}
         {loading ? (
           <div className="page" role="status">
             <p>Đang tải và đồng bộ hội thoại…</p>
@@ -283,12 +341,16 @@ export default function App() {
         ) : page === "memories" ? (
           <Memories />
         ) : page === "knowledge" ? (
-          <Knowledge />
+          <Knowledge onOpenSource={setOpenSource} />
         ) : page === "learned" ? (
           <Learned />
         ) : (
           <Chat
-            key={selected || "new"}
+            key={temporary ? "temporary" : selected || "new"}
+            temporary={temporary}
+            onToggleTemporary={() => newChat(!temporary)}
+            onRemember={setRememberMessage}
+            onOpenSource={setOpenSource}
             title={items.find((i) => i.id === selected)?.title}
             focusMessageId={focusMessageId}
             sources={sources}
@@ -301,6 +363,30 @@ export default function App() {
           />
         )}
       </main>
+      {openSource && (
+        <SourceViewer
+          key={openSource.source + ":" + openSource.chunk}
+          source={openSource}
+          onClose={() => setOpenSource(null)}
+        />
+      )}
+      {rememberMessage && (
+        <MemoryEditor
+          message={rememberMessage}
+          onClose={() => setRememberMessage(null)}
+          onSaved={(result) =>
+            setNotice(
+              result.status === "conflict"
+                ? "Thông tin mới có thể mâu thuẫn với ký ức cũ. Hãy chọn điều cần ghi nhớ."
+                : result.status === "existing"
+                  ? "Thông tin này đã có trong trí nhớ."
+                  : result.comparisonLimited
+                    ? "Đã lưu ký ức; hiện chỉ kiểm tra mâu thuẫn cơ bản. Bạn có thể xem và sửa trong Trí nhớ."
+                    : "Đã lưu ký ức theo lựa chọn của bạn.",
+            )
+          }
+        />
+      )}
     </div>
   );
 }
